@@ -59,6 +59,8 @@ curl -X POST http://5.180.137.197:5000/create \
 
 curl http://5.180.137.197:5000/download/my-device
 
+curl -o test-device.conf http://5.180.137.197:5000/download/test-device
+
 curl -o my-device2_qr.png http://5.180.137.197:5000/download_qr/my-device
 curl -o my-device2_qr.png http://5.180.137.197:5000/download_qr/my-device
 
