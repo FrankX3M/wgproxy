@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# Убираем цветовую схему, которая вызывает проблемы
+# Инициализация WireGuard API сервера
 echo "Инициализация WireGuard API сервера..."
 
 # Параметры
@@ -19,6 +19,12 @@ SERVER_PUB_IP=$(ip -4 addr show dev ${SERVER_PUB_NIC} | grep -oP '(?<=inet\s)\d+
 
 if [ -z "$SERVER_PUB_IP" ]; then
     SERVER_PUB_IP=$(ip -6 addr show dev ${SERVER_PUB_NIC} | grep -oP '(?<=inet6\s)[0-9a-fA-F:]+' | head -1)
+fi
+
+# Получение внешнего IP
+EXTERNAL_IP=$(curl -s -4 ifconfig.me || curl -s -4 icanhazip.com)
+if [ -n "$EXTERNAL_IP" ]; then
+    SERVER_PUB_IP=$EXTERNAL_IP
 fi
 
 echo "Используется интерфейс: ${SERVER_PUB_NIC}"
@@ -93,59 +99,29 @@ echo "Проверка конфигурации WireGuard..."
 CONFIG_FILE="/etc/wireguard/${SERVER_WG_NIC}.conf"
 PARAMS_FILE="/etc/wireguard/params"
 
-# Функция для обработки дублированных ключей
-fix_duplicated_keys() {
-    local file=$1
-    local pattern=$2
-    local key_name=$3
-    
-    if grep -q "$pattern.*=.*=.*=" "$file"; then
-        echo "Обнаружен дублированный $key_name в $file"
-        
-        # Извлечение первого ключа (первая половина дублированного ключа)
-        local first_key=$(grep "$pattern" "$file" | sed -E "s/$pattern *= *([a-zA-Z0-9+\/=]+).*/\1/" | cut -d'=' -f1)
-        
-        if [ -n "$first_key" ]; then
-            echo "Исправление дублированного $key_name..."
-            sed -i "s/$pattern *=.*$/$pattern = $first_key/" "$file"
-            echo "$key_name исправлен в $file"
-        fi
-    fi
-}
-
 # Проверка на дублированные ключи
 if [ -f "$CONFIG_FILE" ]; then
     # Исправление дублированных ключей в конфигурации
-    fix_duplicated_keys "$CONFIG_FILE" "PrivateKey" "приватный ключ"
-    
-    # Для пиров
-    PEER_SECTIONS=$(grep -n "\[Peer\]" "$CONFIG_FILE" | cut -d ":" -f1)
-    
-    for LINE_NUM in $PEER_SECTIONS; do
-        # Находим блок текущего пира
-        NEXT_PEER=$(grep -n "\[Peer\]" "$CONFIG_FILE" | awk -v line="$LINE_NUM" '$1 > line {print $1; exit}')
+    if grep -q "PrivateKey.*=.*=.*=" "$CONFIG_FILE"; then
+        echo "Обнаружен дублированный приватный ключ в $CONFIG_FILE"
+        echo "Исправление дублированного приватный ключ..."
         
-        if [ -z "$NEXT_PEER" ]; then
-            END_LINE=$(wc -l "$CONFIG_FILE" | awk '{print $1}')
-        else
-            END_LINE=$((NEXT_PEER - 1))
+        # Извлечение первого ключа (первая половина дублированного ключа)
+        # и создание нового ключа на всякий случай
+        NEW_PRIVATE_KEY=$(wg genkey)
+        
+        # Обновление файла конфигурации
+        sed -i "s|PrivateKey *=.*$|PrivateKey = $NEW_PRIVATE_KEY|" "$CONFIG_FILE"
+        echo "приватный ключ исправлен в $CONFIG_FILE"
+        
+        # Обновление файла params
+        if [ -f "$PARAMS_FILE" ]; then
+            NEW_PUBLIC_KEY=$(echo "$NEW_PRIVATE_KEY" | wg pubkey)
+            sed -i "s|SERVER_PRIV_KEY=.*$|SERVER_PRIV_KEY=$NEW_PRIVATE_KEY|" "$PARAMS_FILE"
+            sed -i "s|SERVER_PUB_KEY=.*$|SERVER_PUB_KEY=$NEW_PUBLIC_KEY|" "$PARAMS_FILE"
+            echo "Ключи обновлены в файле params"
         fi
-        
-        # Создаем временный файл для блока пира
-        TMP_PEER_FILE=$(mktemp)
-        sed -n "${LINE_NUM},${END_LINE}p" "$CONFIG_FILE" > "$TMP_PEER_FILE"
-        
-        # Исправляем дублированные ключи в блоке пира
-        fix_duplicated_keys "$TMP_PEER_FILE" "PublicKey" "публичный ключ"
-        fix_duplicated_keys "$TMP_PEER_FILE" "PresharedKey" "предварительно разделяемый ключ"
-        
-        # Заменяем блок пира в основной конфигурации
-        sed -i "${LINE_NUM},${END_LINE}d" "$CONFIG_FILE"
-        sed -i "${LINE_NUM}r $TMP_PEER_FILE" "$CONFIG_FILE"
-        
-        # Удаляем временный файл
-        rm -f "$TMP_PEER_FILE"
-    done
+    fi
 fi
 
 # Проверка и исправление пустого приватного ключа
@@ -195,6 +171,19 @@ EOF
         fi
         
         echo "Приватный и публичный ключи обновлены"
+    fi
+fi
+
+# Обновление внешнего IP сервера в файле params
+if [ -f "$PARAMS_FILE" ] && [ -n "$EXTERNAL_IP" ]; then
+    if grep -q "SERVER_PUB_IP=" "$PARAMS_FILE"; then
+        # Проверяем текущий IP в файле
+        CURRENT_IP=$(grep "SERVER_PUB_IP=" "$PARAMS_FILE" | cut -d'=' -f2)
+        if [ "$CURRENT_IP" != "$EXTERNAL_IP" ]; then
+            echo "Обновление публичного IP в файле params..."
+            sed -i "s|SERVER_PUB_IP=.*$|SERVER_PUB_IP=$EXTERNAL_IP|" "$PARAMS_FILE"
+            echo "Публичный IP обновлен: $EXTERNAL_IP"
+        fi
     fi
 fi
 
