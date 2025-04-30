@@ -29,26 +29,26 @@ mkdir -p /etc/wireguard/clients
 chmod 700 /etc/wireguard
 chmod 700 /etc/wireguard/clients
 
-# Инициализация WireGuard, если нет конфигурации
-if [ ! -f "/etc/wireguard/${SERVER_WG_NIC}.conf" ]; then
-    echo "Инициализация WireGuard. Создание конфигурации..."
+# # Инициализация WireGuard, если нет конфигурации
+# if [ ! -f "/etc/wireguard/${SERVER_WG_NIC}.conf" ]; then
+#     echo "Инициализация WireGuard. Создание конфигурации..."
 
-    # Генерация ключей через временные файлы
-    TEMP_PRIV_KEY_FILE=$(mktemp)
-    TEMP_PUB_KEY_FILE=$(mktemp)
+#     # Генерация ключей через временные файлы
+#     TEMP_PRIV_KEY_FILE=$(mktemp)
+#     TEMP_PUB_KEY_FILE=$(mktemp)
     
-    wg genkey > "$TEMP_PRIV_KEY_FILE"
-    cat "$TEMP_PRIV_KEY_FILE" | wg pubkey > "$TEMP_PUB_KEY_FILE"
+#     wg genkey > "$TEMP_PRIV_KEY_FILE"
+#     cat "$TEMP_PRIV_KEY_FILE" | wg pubkey > "$TEMP_PUB_KEY_FILE"
     
-    SERVER_PRIV_KEY=$(cat "$TEMP_PRIV_KEY_FILE")
-    SERVER_PUB_KEY=$(cat "$TEMP_PUB_KEY_FILE")
+#     SERVER_PRIV_KEY=$(cat "$TEMP_PRIV_KEY_FILE")
+#     SERVER_PUB_KEY=$(cat "$TEMP_PUB_KEY_FILE")
     
-    rm -f "$TEMP_PRIV_KEY_FILE" "$TEMP_PUB_KEY_FILE"
+#     rm -f "$TEMP_PRIV_KEY_FILE" "$TEMP_PUB_KEY_FILE"
 
-    # Проверка ключей
-    echo "Сгенерированы ключи:"
-    echo "Приватный ключ: $SERVER_PRIV_KEY"
-    echo "Публичный ключ: $SERVER_PUB_KEY"
+#     # Проверка ключей
+#     echo "Сгенерированы ключи:"
+#     echo "Приватный ключ: $SERVER_PRIV_KEY"
+#     echo "Публичный ключ: $SERVER_PUB_KEY"
 
     # Сохранение параметров
     cat > /etc/wireguard/params << EOF
