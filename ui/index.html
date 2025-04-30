@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WireGuard API - Управление</title>
+    <link rel="stylesheet" href="css/style.css">
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🔒</text></svg>">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>WireGuard API - Панель управления</h1>
+            <div class="status-indicator" id="server-status">
+                <span class="status-dot"></span>
+                <span class="status-text">Загрузка...</span>
+            </div>
+        </header>
+
+        <div class="dashboard">
+            <div class="card server-info">
+                <h2>Информация о сервере</h2>
+                <div id="server-info-content">
+                    <div class="loading-spinner"></div>
+                </div>
+            </div>
+
+            <div class="card peer-management">
+                <h2>Управление пирами</h2>
+                <div class="add-peer-form">
+                    <h3>Создать новый пир</h3>
+                    <form id="add-peer-form">
+                        <div class="form-group">
+                            <label for="peer-name">Имя пира:</label>
+                            <input type="text" id="peer-name" name="peer-name" placeholder="peer1 (необязательно)">
+                        </div>
+                        <div class="form-group">
+                            <label for="allowed-ips">Разрешенные IP (AllowedIPs):</label>
+                            <input type="text" id="allowed-ips" name="allowed-ips" placeholder="0.0.0.0/0,::/0">
+                        </div>
+                        <div class="form-group">
+                            <label for="dns-servers">DNS сервера:</label>
+                            <input type="text" id="dns-servers" name="dns-servers" placeholder="1.1.1.1,1.0.0.1">
+                        </div>
+                        <button type="submit" class="btn primary-btn">Создать пир</button>
+                    </form>
+                </div>
+                
+                <div class="peer-list">
+                    <h3>Активные пиры</h3>
+                    <div id="peers-table-container">
+                        <div class="loading-spinner"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card actions">
+                <h2>Управление сервером</h2>
+                <div class="action-buttons">
+                    <button id="refresh-status" class="btn secondary-btn">Обновить статус</button>
+                    <button id="restart-wireguard" class="btn warning-btn">Перезапустить WireGuard</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="modal" class="modal">
+            <div class="modal-content">
+                <span class="close-modal">&times;</span>
+                <div id="modal-title">Информация о клиенте</div>
+                <div id="modal-body"></div>
+            </div>
+        </div>
+    </div>
+
+    <footer>
+        <p>WireGuard API &copy; 2023</p>
+    </footer>
+
+    <script src="js/main.js"></script>
+</body>
+</html>
