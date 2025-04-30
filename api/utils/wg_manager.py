@@ -9,6 +9,7 @@ import re
 import json
 import logging
 import subprocess
+import tempfile
 from datetime import datetime
 
 logger = logging.getLogger('wireguard-api.wg_manager')
@@ -60,6 +61,10 @@ class WireGuardManager:
         """Запуск команды оболочки и возврат вывода"""
         try:
             if shell:
+                # Если это команда с процессной подстановкой, используем явно bash
+                if '<(' in command:
+                    command = f"bash -c '{command}'"
+                
                 result = subprocess.run(command, shell=True, check=True, 
                                       stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                       text=True)
@@ -75,10 +80,61 @@ class WireGuardManager:
     
     def _generate_keys(self):
         """Генерация пары ключей WireGuard"""
-        private_key = self._run_command("wg genkey")
-        public_key = self._run_command(f"echo '{private_key}' | wg pubkey")
-        preshared_key = self._run_command("wg genpsk")
-        return private_key, public_key, preshared_key
+        try:
+            # Создаем временные файлы для ключей
+            with tempfile.NamedTemporaryFile(delete=False) as private_key_file:
+                private_key_path = private_key_file.name
+            
+            with tempfile.NamedTemporaryFile(delete=False) as public_key_file:
+                public_key_path = public_key_file.name
+            
+            with tempfile.NamedTemporaryFile(delete=False) as preshared_key_file:
+                preshared_key_path = preshared_key_file.name
+            
+            # Генерируем ключи с сохранением во временные файлы
+            self._run_command(f"wg genkey > {private_key_path}", shell=True)
+            self._run_command(f"cat {private_key_path} | wg pubkey > {public_key_path}", shell=True)
+            self._run_command(f"wg genpsk > {preshared_key_path}", shell=True)
+            
+            # Считываем ключи из файлов
+            with open(private_key_path, 'r') as f:
+                private_key = f.read().strip()
+            
+            with open(public_key_path, 'r') as f:
+                public_key = f.read().strip()
+            
+            with open(preshared_key_path, 'r') as f:
+                preshared_key = f.read().strip()
+            
+            # Удаляем временные файлы
+            os.unlink(private_key_path)
+            os.unlink(public_key_path)
+            os.unlink(preshared_key_path)
+            
+            return private_key, public_key, preshared_key
+        except Exception as e:
+            logger.error(f"Ошибка при генерации ключей: {str(e)}")
+            raise
+    
+    def _sync_wireguard_config(self):
+        """Применение изменений конфигурации WireGuard без перезапуска интерфейса"""
+        try:
+            # Создаем временный файл со stripped конфигурацией
+            temp_config = f"/tmp/wg-{self.interface}-temp.conf"
+            
+            # Выполняем strip конфигурации и сохраняем во временный файл
+            self._run_command(f"wg-quick strip {self.interface} > {temp_config}", shell=True)
+            
+            # Синхронизируем конфигурацию с временным файлом
+            self._run_command(f"wg syncconf {self.interface} {temp_config}", shell=True)
+            
+            # Удаляем временный файл
+            self._run_command(f"rm -f {temp_config}", shell=True)
+            
+            return True
+        except Exception as e:
+            logger.error(f"Ошибка при синхронизации конфигурации: {str(e)}")
+            return False
     
     def _get_next_available_ip(self):
         """Поиск следующего доступного IP в подсети"""
@@ -414,7 +470,7 @@ AllowedIPs = {client_ip}/32,{client_ipv6}/128
 """)
             
             # Применение изменений
-            self._run_command(f"wg syncconf {self.interface} <(wg-quick strip {self.interface})", shell=True)
+            self._sync_wireguard_config()
             
             # Генерация QR-кода, если доступно qrencode
             qr_generated = False
@@ -449,8 +505,7 @@ AllowedIPs = {client_ip}/32,{client_ipv6}/128
         """Удаление пира по публичному ключу"""
         try:
             # Проверка формата публичного ключа
-            if not re.match(r'^[a-zA-Z0-9+/=]{43,44}
-                                , public_key):
+            if not re.match(r'^[a-zA-Z0-9+/=]{43,44}$', public_key):
                 return {"success": False, "message": "Неверный формат публичного ключа"}
             
             # Поиск пира в конфигурации
@@ -492,7 +547,7 @@ AllowedIPs = {client_ip}/32,{client_ipv6}/128
                 f.writelines(new_config)
             
             # Применение изменений
-            self._run_command(f"wg syncconf {self.interface} <(wg-quick strip {self.interface})", shell=True)
+            self._sync_wireguard_config()
             
             # Удаление файлов конфигурации клиента
             if peer_name:

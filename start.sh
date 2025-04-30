@@ -1,11 +1,10 @@
 #!/bin/bash
 set -e
 
-RED='\''\033[0;31m'\''
-ORANGE='\''\033[0;33m'\''
-GREEN='\''\033[0;32m'\''
-NC='\''\033[0m'\''
+# Убираем цветовую схему, которая вызывает проблемы
+echo "Инициализация WireGuard API сервера..."
 
+# Параметры
 SERVER_WG_NIC=${WG_INTERFACE:-wg0}
 SERVER_WG_IPV4=${WG_SERVER_IP:-10.66.66.1}
 SERVER_WG_IPV6=${WG_SERVER_IPV6:-fd42:42:42::1}
@@ -14,23 +13,46 @@ CLIENT_DNS_1=${WG_DNS_1:-1.1.1.1}
 CLIENT_DNS_2=${WG_DNS_2:-1.0.0.1}
 ALLOWED_IPS=${ALLOWED_IPS:-"0.0.0.0/0,::/0"}
 
-SERVER_PUB_NIC=$(ip -4 route ls | grep default | awk '\''{print $5}'\'' | head -1)
-SERVER_PUB_IP=$(ip -4 addr show dev ${SERVER_PUB_NIC} | grep -oP '\''(?<=inet\s)\d+(\.\d+){3}'\'' | head -1)
+# Определение интерфейса и IP
+SERVER_PUB_NIC=$(ip -4 route ls | grep default | awk '{print $5}' | head -1)
+SERVER_PUB_IP=$(ip -4 addr show dev ${SERVER_PUB_NIC} | grep -oP '(?<=inet\s)\d+(\.\d+){3}' | head -1)
 
-if [[ -z ${SERVER_PUB_IP} ]]; then
-    SERVER_PUB_IP=$(ip -6 addr show dev ${SERVER_PUB_NIC} | grep -oP '\''(?<=inet6\s)[0-9a-fA-F:]+'\'' | head -1)
+if [ -z "$SERVER_PUB_IP" ]; then
+    SERVER_PUB_IP=$(ip -6 addr show dev ${SERVER_PUB_NIC} | grep -oP '(?<=inet6\s)[0-9a-fA-F:]+' | head -1)
 fi
 
-echo -e "${GREEN}Используется интерфейс: ${SERVER_PUB_NIC}${NC}"
-echo -e "${GREEN}Публичный IP: ${SERVER_PUB_IP}${NC}"
+echo "Используется интерфейс: ${SERVER_PUB_NIC}"
+echo "Публичный IP: ${SERVER_PUB_IP}"
 
-if [[ ! -f /etc/wireguard/${SERVER_WG_NIC}.conf ]]; then
-    echo -e "${GREEN}Инициализация WireGuard. Создание конфигурации...${NC}"
+# Создание директорий
+mkdir -p /etc/wireguard/clients
+chmod 700 /etc/wireguard
+chmod 700 /etc/wireguard/clients
 
-    SERVER_PRIV_KEY=$(wg genkey)
-    SERVER_PUB_KEY=$(echo "${SERVER_PRIV_KEY}" | wg pubkey)
+# Инициализация WireGuard, если нет конфигурации
+if [ ! -f "/etc/wireguard/${SERVER_WG_NIC}.conf" ]; then
+    echo "Инициализация WireGuard. Создание конфигурации..."
 
-    echo "SERVER_PUB_IP=${SERVER_PUB_IP}
+    # Генерация ключей через временные файлы
+    TEMP_PRIV_KEY_FILE=$(mktemp)
+    TEMP_PUB_KEY_FILE=$(mktemp)
+    
+    wg genkey > "$TEMP_PRIV_KEY_FILE"
+    cat "$TEMP_PRIV_KEY_FILE" | wg pubkey > "$TEMP_PUB_KEY_FILE"
+    
+    SERVER_PRIV_KEY=$(cat "$TEMP_PRIV_KEY_FILE")
+    SERVER_PUB_KEY=$(cat "$TEMP_PUB_KEY_FILE")
+    
+    rm -f "$TEMP_PRIV_KEY_FILE" "$TEMP_PUB_KEY_FILE"
+
+    # Проверка ключей
+    echo "Сгенерированы ключи:"
+    echo "Приватный ключ: $SERVER_PRIV_KEY"
+    echo "Публичный ключ: $SERVER_PUB_KEY"
+
+    # Сохранение параметров
+    cat > /etc/wireguard/params << EOF
+SERVER_PUB_IP=${SERVER_PUB_IP}
 SERVER_PUB_NIC=${SERVER_PUB_NIC}
 SERVER_WG_NIC=${SERVER_WG_NIC}
 SERVER_WG_IPV4=${SERVER_WG_IPV4}
@@ -40,14 +62,16 @@ SERVER_PRIV_KEY=${SERVER_PRIV_KEY}
 SERVER_PUB_KEY=${SERVER_PUB_KEY}
 CLIENT_DNS_1=${CLIENT_DNS_1}
 CLIENT_DNS_2=${CLIENT_DNS_2}
-ALLOWED_IPS=${ALLOWED_IPS}" > /etc/wireguard/params
+ALLOWED_IPS=${ALLOWED_IPS}
+EOF
 
-    echo "[Interface]
+    # Создание конфигурации WireGuard
+    cat > "/etc/wireguard/${SERVER_WG_NIC}.conf" << EOF
+[Interface]
 Address = ${SERVER_WG_IPV4}/24,${SERVER_WG_IPV6}/64
 ListenPort = ${SERVER_PORT}
-PrivateKey = ${SERVER_PRIV_KEY}" > "/etc/wireguard/${SERVER_WG_NIC}.conf"
-
-    echo "PostUp = iptables -I INPUT -p udp --dport ${SERVER_PORT} -j ACCEPT
+PrivateKey = ${SERVER_PRIV_KEY}
+PostUp = iptables -I INPUT -p udp --dport ${SERVER_PORT} -j ACCEPT
 PostUp = iptables -I FORWARD -i ${SERVER_PUB_NIC} -o ${SERVER_WG_NIC} -j ACCEPT
 PostUp = iptables -I FORWARD -i ${SERVER_WG_NIC} -j ACCEPT
 PostUp = iptables -t nat -A POSTROUTING -o ${SERVER_PUB_NIC} -j MASQUERADE
@@ -58,34 +82,38 @@ PostDown = iptables -D FORWARD -i ${SERVER_PUB_NIC} -o ${SERVER_WG_NIC} -j ACCEP
 PostDown = iptables -D FORWARD -i ${SERVER_WG_NIC} -j ACCEPT
 PostDown = iptables -t nat -D POSTROUTING -o ${SERVER_PUB_NIC} -j MASQUERADE
 PostDown = ip6tables -D FORWARD -i ${SERVER_WG_NIC} -j ACCEPT
-PostDown = ip6tables -t nat -D POSTROUTING -o ${SERVER_PUB_NIC} -j MASQUERADE" >> "/etc/wireguard/${SERVER_WG_NIC}.conf"
+PostDown = ip6tables -t nat -D POSTROUTING -o ${SERVER_PUB_NIC} -j MASQUERADE
+EOF
 
     chmod 600 -R /etc/wireguard/
-
-    echo "net.ipv4.ip_forward = 1
-net.ipv6.conf.all.forwarding = 1" > /etc/sysctl.d/wg.conf
-    sysctl --system
 fi
 
-echo -e "${GREEN}Запуск WireGuard...${NC}"
+# Проверка и загрузка модуля WireGuard
+if ! lsmod | grep -q wireguard; then
+    echo "Модуль WireGuard не загружен, попытка загрузить..."
+    modprobe wireguard || echo "Не удалось загрузить модуль WireGuard. Убедитесь, что он доступен в хост-системе."
+fi
+
+# Запуск WireGuard
+echo "Запуск WireGuard..."
 wg-quick up ${SERVER_WG_NIC}
 
-mkdir -p /etc/wireguard/clients
-
-echo -e "${GREEN}Запуск API сервера...${NC}"
+# Запуск API сервера
+echo "Запуск API сервера..."
 cd /app && python3 api/app.py &
 API_PID=$!
 
-function cleanup() {
-    echo -e "${GREEN}Остановка API сервера...${NC}"
+# Обработка завершения
+cleanup() {
+    echo "Остановка API сервера..."
     kill $API_PID
 
-    echo -e "${GREEN}Остановка WireGuard...${NC}"
+    echo "Остановка WireGuard..."
     wg-quick down ${SERVER_WG_NIC}
     exit 0
 }
 
 trap cleanup SIGTERM SIGINT SIGQUIT
 
-echo -e "${GREEN}WireGuard и API сервер запущены. Ожидание запросов...${NC}"
+echo "WireGuard и API сервер запущены. Ожидание запросов..."
 tail -f /dev/null & wait $!

@@ -1,21 +1,7 @@
 #!/bin/bash
-# Скрипт инициализации WireGuard сервера в соответствии с angristan/wireguard-install
+# Простой скрипт инициализации WireGuard с максимально надежной генерацией ключей
 
 set -e
-
-# Цвета для вывода
-RED='\033[0;31m'
-ORANGE='\033[0;33m'
-GREEN='\033[0;32m'
-NC='\033[0m' # No Color
-
-echo -e "${GREEN}Инициализация WireGuard сервера...${NC}"
-
-# Проверка на root
-if [ "$EUID" -ne 0 ] && [ "$IN_DOCKER" != "true" ]; then
-  echo -e "${RED}Скрипт должен быть запущен с правами root${NC}"
-  exit 1
-fi
 
 # Параметры
 WG_INTERFACE="${WG_INTERFACE:-wg0}"
@@ -35,21 +21,36 @@ if [[ -z ${SERVER_PUB_IP} ]]; then
     SERVER_PUB_IP=$(ip -6 addr show dev ${SERVER_PUB_NIC} | grep -oP '(?<=inet6\s)[0-9a-fA-F:]+' | head -1)
 fi
 
-echo -e "${GREEN}Определен интерфейс: ${SERVER_PUB_NIC}${NC}"
-echo -e "${GREEN}Публичный IP: ${SERVER_PUB_IP}${NC}"
+echo "Определен интерфейс: ${SERVER_PUB_NIC}"
+echo "Публичный IP: ${SERVER_PUB_IP}"
 
 # Создание директорий
 mkdir -p /etc/wireguard/clients
 chmod 700 /etc/wireguard
 chmod 700 /etc/wireguard/clients
 
-# Генерация ключей сервера
-echo -e "${GREEN}Генерация ключей...${NC}"
-SERVER_PRIV_KEY=$(wg genkey)
-SERVER_PUB_KEY=$(echo "${SERVER_PRIV_KEY}" | wg pubkey)
+# Генерация ключей сервера через файлы
+echo "Генерация ключей..."
+TEMP_PRIV_KEY_FILE=$(mktemp)
+TEMP_PUB_KEY_FILE=$(mktemp)
+
+wg genkey > "$TEMP_PRIV_KEY_FILE"
+cat "$TEMP_PRIV_KEY_FILE" | wg pubkey > "$TEMP_PUB_KEY_FILE"
+
+SERVER_PRIV_KEY=$(cat "$TEMP_PRIV_KEY_FILE")
+SERVER_PUB_KEY=$(cat "$TEMP_PUB_KEY_FILE")
+
+# Удаляем временные файлы
+rm -f "$TEMP_PRIV_KEY_FILE" "$TEMP_PUB_KEY_FILE"
+
+# Вывод проверки ключей
+echo "Сгенерированы ключи:"
+echo "Приватный ключ: $SERVER_PRIV_KEY"
+echo "Публичный ключ: $SERVER_PUB_KEY"
 
 # Сохранение настроек WireGuard
-echo "SERVER_PUB_IP=${SERVER_PUB_IP}
+cat > /etc/wireguard/params << EOF
+SERVER_PUB_IP=${SERVER_PUB_IP}
 SERVER_PUB_NIC=${SERVER_PUB_NIC}
 SERVER_WG_NIC=${WG_INTERFACE}
 SERVER_WG_IPV4=${WG_SERVER_IP}
@@ -59,17 +60,17 @@ SERVER_PRIV_KEY=${SERVER_PRIV_KEY}
 SERVER_PUB_KEY=${SERVER_PUB_KEY}
 CLIENT_DNS_1=${CLIENT_DNS_1}
 CLIENT_DNS_2=${CLIENT_DNS_2}
-ALLOWED_IPS=${ALLOWED_IPS}" >/etc/wireguard/params
+ALLOWED_IPS=${ALLOWED_IPS}
+EOF
 
 # Создание серверного интерфейса
-echo -e "${GREEN}Создание конфигурации сервера...${NC}"
-echo "[Interface]
+echo "Создание конфигурации сервера..."
+cat > "/etc/wireguard/${WG_INTERFACE}.conf" << EOF
+[Interface]
 Address = ${WG_SERVER_IP}/24,${WG_SERVER_IPV6}/64
 ListenPort = ${WG_SERVER_PORT}
-PrivateKey = ${SERVER_PRIV_KEY}" >"/etc/wireguard/${WG_INTERFACE}.conf"
-
-# Добавление правил iptables
-echo "PostUp = iptables -I INPUT -p udp --dport ${WG_SERVER_PORT} -j ACCEPT
+PrivateKey = ${SERVER_PRIV_KEY}
+PostUp = iptables -I INPUT -p udp --dport ${WG_SERVER_PORT} -j ACCEPT
 PostUp = iptables -I FORWARD -i ${SERVER_PUB_NIC} -o ${WG_INTERFACE} -j ACCEPT
 PostUp = iptables -I FORWARD -i ${WG_INTERFACE} -j ACCEPT
 PostUp = iptables -t nat -A POSTROUTING -o ${SERVER_PUB_NIC} -j MASQUERADE
@@ -80,45 +81,22 @@ PostDown = iptables -D FORWARD -i ${SERVER_PUB_NIC} -o ${WG_INTERFACE} -j ACCEPT
 PostDown = iptables -D FORWARD -i ${WG_INTERFACE} -j ACCEPT
 PostDown = iptables -t nat -D POSTROUTING -o ${SERVER_PUB_NIC} -j MASQUERADE
 PostDown = ip6tables -D FORWARD -i ${WG_INTERFACE} -j ACCEPT
-PostDown = ip6tables -t nat -D POSTROUTING -o ${SERVER_PUB_NIC} -j MASQUERADE" >>"/etc/wireguard/${WG_INTERFACE}.conf"
+PostDown = ip6tables -t nat -D POSTROUTING -o ${SERVER_PUB_NIC} -j MASQUERADE
+EOF
 
 # Установка правильных прав доступа
 chmod 600 -R /etc/wireguard/
 
 # Включение IP forwarding
-echo -e "${GREEN}Включение IP forwarding...${NC}"
+echo "Включение IP forwarding..."
 echo "net.ipv4.ip_forward = 1
-net.ipv6.conf.all.forwarding = 1" >/etc/sysctl.d/wg.conf
-sysctl --system
+net.ipv6.conf.all.forwarding = 1" > /etc/sysctl.d/wg.conf
 
-# Запуск WireGuard
-echo -e "${GREEN}Запуск WireGuard...${NC}"
-if [[ -f /etc/alpine-release ]]; then
-    # Для Alpine
-    wg-quick up ${WG_INTERFACE}
-    rc-update add wg-quick.${WG_INTERFACE} default
-else
-    # Для Debian/Ubuntu/etc
-    wg-quick up ${WG_INTERFACE}
-    if command -v systemctl &>/dev/null; then
-        systemctl enable wg-quick@${WG_INTERFACE}
-    fi
-fi
+# Применение параметров sysctl (если возможно в контейнере)
+sysctl --system || echo "Невозможно применить параметры sysctl в контейнере, убедитесь, что это сделано на хосте"
 
-# Создание JSON файла с информацией о сервере
-echo "{
-  \"interface\": \"${WG_INTERFACE}\",
-  \"public_key\": \"${SERVER_PUB_KEY}\",
-  \"private_key\": \"${SERVER_PRIV_KEY}\",
-  \"address\": \"${WG_SERVER_IP}/24,${WG_SERVER_IPV6}/64\",
-  \"listen_port\": ${WG_SERVER_PORT},
-  \"server_ip\": \"${SERVER_PUB_IP}\",
-  \"dns\": [\"${CLIENT_DNS_1}\", \"${CLIENT_DNS_2}\"],
-  \"allowed_ips\": \"${ALLOWED_IPS}\"
-}" > /etc/wireguard/server_info.json
-
-echo -e "${GREEN}WireGuard сервер успешно инициализирован!${NC}"
-echo -e "${GREEN}Интерфейс: ${WG_INTERFACE}${NC}"
-echo -e "${GREEN}IP сервера: ${WG_SERVER_IP}${NC}"
-echo -e "${GREEN}Порт: ${WG_SERVER_PORT}${NC}"
-echo -e "${GREEN}Публичный ключ: ${SERVER_PUB_KEY}${NC}"
+echo "WireGuard сервер успешно инициализирован!"
+echo "Интерфейс: ${WG_INTERFACE}"
+echo "IP сервера: ${WG_SERVER_IP}"
+echo "Порт: ${WG_SERVER_PORT}"
+echo "Публичный ключ: ${SERVER_PUB_KEY}"
