@@ -53,6 +53,14 @@ docker compose ps
 ```
 
 ## Использование
+curl -X POST http://5.180.137.197:5000/create \
+  -H "Content-Type: application/json" \
+  -d '{"name":"my-device", "allowed_ips":"0.0.0.0/0,::/0", "dns":"1.1.1.1,8.8.8.8"}'
+
+curl http://5.180.137.197:5000/download/my-device
+
+curl -o my-device2_qr.png http://5.180.137.197:5000/download_qr/my-device
+curl -o my-device2_qr.png http://5.180.137.197:5000/download_qr/my-device
 
 ### Веб-интерфейс
 
