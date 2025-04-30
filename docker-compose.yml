@@ -33,6 +33,11 @@ services:
       - IN_DOCKER=true
     # Изменяем network_mode с "host" на "bridge" с публикацией портов
     network_mode: bridge
+    healthcheck:
+      test: ["CMD", "bash", "-c", "wg show wg0 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   # Веб-интерфейс для управления
   wireguard-ui:
