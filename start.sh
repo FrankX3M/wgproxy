@@ -214,5 +214,7 @@ cleanup() {
 
 trap cleanup SIGTERM SIGINT SIGQUIT
 
+docker exec -it wireguard-server apt-get update && docker exec -it wireguard-server apt-get install -y qrencode
+
 echo "WireGuard и API сервер запущены. Ожидание запросов..."
 tail -f /dev/null & wait $!

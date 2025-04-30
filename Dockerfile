@@ -16,6 +16,10 @@ RUN apt-get install -y \
     python3-setuptools \
     kmod \
     dnsutils \
+    # Убедимся, что qrencode точно установлен, а также добавим его зависимости
+    libqrencode4 \
+    libqrencode-dev \
+    && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Создание необходимых директорий
@@ -86,6 +90,13 @@ else\n\
     echo "Файл конфигурации $CONFIG_FILE не найден"\n\
 fi' > /app/scripts/fix-duplicated-keys.sh
 
+# Проверка установки qrencode и его функциональности
+RUN qrencode --version && \
+    echo "Qrencode успешно установлен" || \
+    (echo "Ошибка установки qrencode, повторная установка" && \
+     apt-get update && \
+     apt-get install -y qrencode)
+
 # Установка переменных окружения
 ENV WG_CONFIG_DIR=/etc/wireguard
 ENV WG_INTERFACE=wg0
@@ -103,6 +114,15 @@ ENV API_HOST=0.0.0.0
 # Делаем скрипты исполняемыми
 COPY start.sh /app/start.sh
 RUN chmod +x start.sh /app/scripts/*.sh
+
+# Создаем тестовый QR-код для проверки работы qrencode
+RUN echo "test" | qrencode -t png -o /tmp/test_qr.png && \
+    if [ -f "/tmp/test_qr.png" ]; then \
+        echo "QR-код успешно сгенерирован"; \
+    else \
+        echo "Ошибка генерации QR-кода"; \
+        exit 1; \
+    fi
 
 # Открываем порты
 EXPOSE 51820/udp
