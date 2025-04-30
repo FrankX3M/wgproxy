@@ -26,7 +26,7 @@
 ### 1. Клонирование репозитория
 
 ```bash
-git clone https://github.com/yourusername/wireguard-api
+git clone https://github.com/FrankX3M/wgproxy.git
 cd wireguard-api
 
 ### 2. Настройка прав доступа для скриптов
